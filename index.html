@@ -1,4 +1,3 @@
-html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -16,7 +15,6 @@ html
 
   <title>AR Sculpture</title>
 
-  <!-- model-viewer 4.x -->
   <script
     type="module"
     src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js">
@@ -189,7 +187,6 @@ html
       .action-button { animation: none !important; }
     }
 
-    /* ---------- Banner ---------- */
     .top-banner {
       position: fixed;
       top: 12px;
@@ -207,13 +204,12 @@ html
       line-height: 1.4;
     }
 
-    /* ---------- Capability diagnostics (hidden by default) ---------- */
     #diagnostics {
       display: none;
       position: fixed;
       top: 8px;
       right: 8px;
-      background: rgba(0,0,0,0.75);
+      background: rgba(0,0,0,0.78);
       color: #fff;
       font-family: ui-monospace, Menlo, Consolas, monospace;
       font-size: 10px;
@@ -223,6 +219,7 @@ html
       max-width: 55vw;
       line-height: 1.3;
       pointer-events: none;
+      white-space: pre-wrap;
     }
   </style>
 </head>
@@ -299,7 +296,6 @@ html
     </div>
   </div>
 
-  <!-- Diagnostics (enable with ?debug=1 in URL) -->
   <div id="diagnostics"></div>
 
   <script>
@@ -309,8 +305,8 @@ html
     /* =========================================================
        0. URL PARAMS
        ========================================================= */
-    const params       = new URLSearchParams(location.search);
-    const debugMode    = params.get("debug") === "1";
+    const params    = new URLSearchParams(location.search);
+    const debugMode = params.get("debug") === "1";
 
     /* =========================================================
        1. ELEMENT REFS
@@ -341,16 +337,16 @@ html
           try { return typeof a === "object" ? JSON.stringify(a) : String(a); }
           catch { return String(a); }
         }).join(" "));
-        while (logLines.length > 12) logLines.shift();
+        while (logLines.length > 14) logLines.shift();
         diagnostics.textContent = logLines.join("\n");
       }
     }
 
     /* =========================================================
-       3. FEATURE DETECTION (no AR decisions from UA)
+       3. ENVIRONMENT / FEATURE DETECTION
        ========================================================= */
+    const ua = navigator.userAgent || "";
 
-    // WebGL
     const hasWebGL = (() => {
       try {
         const c = document.createElement("canvas");
@@ -359,79 +355,63 @@ html
       } catch (_) { return false; }
     })();
 
-    // Secure context
     const isSecure = window.isSecureContext === true;
 
-    // WebXR
-    const xr = navigator.xr;
-    const hasWebXR       = !!xr;
-    const hasXRAR        = !!(xr && typeof xr.isSessionSupported === "function");
-    let   webxrARSupported = null; // resolved async
+    const isAndroid = /Android/i.test(ua);
+    const isIOS =
+      /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-    // Quick Look (iOS only)
-    const supportsQuickLook = (() => {
-      // iOS Safari only. Chrome iOS shares WKWebView but does NOT trigger quick-look.
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
-      return isIOS && isSafari;
-    })();
+    // In-app browsers block Scene Viewer intent and Quick Look.
+    const isInAppBrowser =
+      /\b(FBAN|FBAV|FB_IAB|Instagram|Line\/|WhatsApp|Twitter|MicroMessenger|; wv\))/i.test(ua);
 
-    // Scene Viewer intent support (Android Chromium-based)
-    const supportsSceneViewer = (() => {
-      const ua = navigator.userAgent;
-      if (!/Android/i.test(ua)) return false;
-      // Chrome, Edge, Samsung Internet, Opera, Brave, Vivaldi, etc.
-      // Exclude Firefox (Gecko) — it doesn't handle intent:// for Scene Viewer.
-      const isFirefox = /Firefox|FxiOS/i.test(ua);
-      return !isFirefox;
-    })();
+    // Browser engine classification (used ONLY to pick launch method,
+    // never to decide AR capability).
+    const isFirefoxAndroid = isAndroid && /Firefox|FxiOS/i.test(ua);
+    const isChromeIOS      = isIOS && /CriOS/i.test(ua);
+    const isFirefoxIOS     = isIOS && /FxiOS/i.test(ua);
+    const isSafariIOS      = isIOS && !isChromeIOS && !isFirefoxIOS;
 
-    // In-app browsers (block both Scene Viewer and Quick Look)
-    const isInAppBrowser = /\b(FBAN|FBAV|FB_IAB|Instagram|Line\/|WhatsApp|Twitter|MicroMessenger|; wv\))/i
-      .test(navigator.userAgent);
+    // Scene Viewer works on Chromium-family Android browsers only.
+    const canTrySceneViewer =
+      isAndroid && !isFirefoxAndroid && !isInAppBrowser;
 
-    // Camera permission probe (non-blocking; may not be supported)
-    async function probeCameraPermission() {
-      try {
-        if (!navigator.permissions || !navigator.permissions.query) {
-          return "unknown";
-        }
-        const status = await navigator.permissions.query({ name: "camera" });
-        return status.state; // "granted" | "denied" | "prompt"
-      } catch {
-        return "unknown";
-      }
-    }
+    // Quick Look works on iOS Safari only.
+    const canTryQuickLook = isSafariIOS && !isInAppBrowser;
 
-    log("features", {
-      hasWebGL, isSecure, hasWebXR, hasXRAR,
-      supportsQuickLook, supportsSceneViewer, isInAppBrowser
+    log("env", {
+      isAndroid, isIOS, isInAppBrowser,
+      isFirefoxAndroid, isChromeIOS, isFirefoxIOS, isSafariIOS,
+      canTrySceneViewer, canTryQuickLook,
+      isSecure, hasWebGL
     });
 
     /* =========================================================
-       4. ASYNC AR SUPPORT PROBE
+       4. ASYNC WEBXR PROBE (universal fallback)
        ========================================================= */
-    async function probeWebXRAR() {
-      if (!hasXRAR) return false;
+    let webxrARSupported = null;
+    (async () => {
       try {
-        return await xr.isSessionSupported("immersive-ar");
+        if (navigator.xr && typeof navigator.xr.isSessionSupported === "function") {
+          webxrARSupported = await navigator.xr.isSessionSupported("immersive-ar");
+        } else {
+          webxrARSupported = false;
+        }
       } catch {
-        return false;
+        webxrARSupported = false;
       }
-    }
+      log("webxrARSupported:", webxrARSupported);
+    })();
 
     /* =========================================================
        5. STATE
        ========================================================= */
-    let modelLoaded        = false;
-    let arAvailable        = false;
-    let arStarted          = false;
-    let arCheckAttempts    = 0;
-    let arCheckTimer       = null;
-    let loadTimeoutId      = null;
-    let webxrProbeDone     = false;
-    let mvCanActivateAR    = false; // last known value from model-viewer
+    let modelLoaded       = false;
+    let arPossible        = false;
+    let arStarted         = false;
+    let activationTimer   = null;
+    let loadTimeoutId     = null;
 
     /* =========================================================
        6. ICONS
@@ -450,7 +430,7 @@ html
        7. UI STATE
        ========================================================= */
     function setModelOnlyMode() {
-      arAvailable = false;
+      arPossible = false;
       actionButton.classList.remove("ar-available", "loading");
       actionButton.classList.add("model-only");
       actionButton.innerHTML = modelIcon + "<span>View 3D Model</span>";
@@ -458,7 +438,7 @@ html
     }
 
     function setArMode() {
-      arAvailable = true;
+      arPossible = true;
       actionButton.classList.remove("model-only", "loading");
       actionButton.classList.add("ar-available");
       actionButton.innerHTML = arIconSvg + "<span>View in AR</span>";
@@ -472,10 +452,14 @@ html
         '<div class="spinner"></div><span>' + label + "</span>";
     }
 
-    function setButtonIdle() {
-      actionButton.classList.remove("loading");
-      if (arAvailable) setArMode();
-      else setModelOnlyMode();
+    function resetButton() {
+      if (activationTimer) {
+        clearTimeout(activationTimer);
+        activationTimer = null;
+      }
+      arStarted = false;
+      if (arPossible) setArMode();
+      else            setModelOnlyMode();
     }
 
     /* =========================================================
@@ -501,60 +485,126 @@ html
     }
 
     /* =========================================================
-       9. UNIVERSAL AR CAPABILITY EVALUATION
+       9. CAPABILITY DECISION
        ========================================================= */
-    async function evaluateArCapability() {
-      // 1. Ask model-viewer (it already knows about Scene Viewer, Quick Look
-      //    and its own WebXR capabilities).
+    function evaluateArCapability() {
+      // 1. Model-viewer's own verdict (covers Scene Viewer, Quick Look, WebXR).
       const mvCan = modelViewer.canActivateAR;
-      if (typeof mvCan === "boolean") {
-        mvCanActivateAR = mvCan;
-      }
+      const mvOK  = mvCan === true;
 
-      // 2. Ask WebXR directly (works even when model-viewer hasn't decided yet).
-      if (!webxrProbeDone) {
-        webxrProbeDone = true;
-        webxrARSupported = await probeWebXRAR();
-        log("webxr immersive-ar supported:", webxrARSupported);
-      }
+      // 2. Direct checks (needed on devices where model-viewer's check
+      //    hasn't resolved yet or returns false incorrectly).
+      const xrOK    = webxrARSupported === true;
+      const svOK    = canTrySceneViewer;
+      const qlOK    = canTryQuickLook;
+      const secureOK = isSecure;
 
-      // 3. Combine:
-      //    - model-viewer says yes  → AR available
-      //    - WebXR AR is supported  → AR available (model-viewer can use webxr mode)
-      //    - Quick Look on iOS Safari → AR available
-      //    - Scene Viewer on Android Chromium → AR available
-      const quickLook   = supportsQuickLook;
-      const sceneViewer = supportsSceneViewer;
-      const xrOK        = webxrARSupported === true;
+      // 3. Combine.
+      const canAR = secureOK && (mvOK || xrOK || svOK || qlOK);
 
-      const canAR = !!(mvCanActivateAR || xrOK || quickLook || sceneViewer);
+      log("capability", { mvCan, xrOK, svOK, qlOK, secureOK, canAR });
 
-      log("AR decision", {
-        mvCanActivateAR, xrOK, quickLook, sceneViewer, canAR
-      });
-
-      arAvailable = canAR;
+      arPossible = canAR;
       if (canAR) setArMode();
       else       setModelOnlyMode();
-
-      return true;
     }
 
-    function scheduleArCapabilityCheck(delay = 400) {
-      if (arCheckTimer) clearTimeout(arCheckTimer);
-      arCheckTimer = setTimeout(async () => {
-        await evaluateArCapability();
-        // Some Android devices need ARCore to initialize; retry a few times.
-        if (!arAvailable && arCheckAttempts < 5) {
-          arCheckAttempts++;
-          log("retry AR capability check", arCheckAttempts);
-          scheduleArCapabilityCheck(700 + arCheckAttempts * 400);
-        }
-      }, delay);
+    function scheduleCapabilityCheck() {
+      // Run a few times; some Androids need ARCore to spin up.
+      evaluateArCapability();
+      setTimeout(evaluateArCapability, 600);
+      setTimeout(evaluateArCapability, 1600);
+      setTimeout(evaluateArCapability, 3000);
     }
 
     /* =========================================================
-       10. LOAD TIMEOUT
+       10. ANDROID SCENE VIEWER LAUNCH (direct intent)
+       ========================================================= */
+    function buildSceneViewerIntent() {
+      const glbUrl = new URL("./escultura.glb", window.location.href).href;
+      const fallbackUrl = window.location.href;
+
+      // Scene Viewer intent per Google's documentation.
+      // Note: `file` expects an https URL to the .glb file.
+      return (
+        "intent://arvr.google.com/scene-viewer/1.0" +
+        "?file=" + encodeURIComponent(glbUrl) +
+        "&mode=ar_preferred" +
+        "&title=" + encodeURIComponent("AR Sculpture") +
+        "#Intent;" +
+        "scheme=https;" +
+        "package=com.google.ar.core;" +
+        "action=android.intent.action.VIEW;" +
+        "S.browser_fallback_url=" + encodeURIComponent(fallbackUrl) + ";" +
+        "end;"
+      );
+    }
+
+    function launchSceneViewer() {
+      const intent = buildSceneViewerIntent();
+      log("launch Scene Viewer");
+      // Navigating to intent:// hands off to the system.
+      window.location.href = intent;
+    }
+
+    /* =========================================================
+       11. iOS QUICK LOOK LAUNCH (via model-viewer)
+       ========================================================= */
+    async function launchQuickLook() {
+      log("launch Quick Look via model-viewer.activateAR()");
+      await modelViewer.activateAR();
+    }
+
+    /* =========================================================
+       12. UNIVERSAL LAUNCH DISPATCHER
+       ========================================================= */
+    async function launchAR() {
+      // Priority order (most reliable first, per platform):
+      //   Android Chromium → Scene Viewer intent
+      //   iOS Safari       → Quick Look via model-viewer
+      //   Anywhere else    → model-viewer's own activateAR (WebXR etc.)
+      try {
+        if (canTrySceneViewer) {
+          launchSceneViewer();
+          // No way to detect completion of intent launch; the watchdog
+          // below resets the button after 5 s if the page is still here.
+          return;
+        }
+        if (canTryQuickLook) {
+          await launchQuickLook();
+          return;
+        }
+        // Fall back to model-viewer (may use WebXR).
+        if (modelViewer.canActivateAR === true) {
+          log("launch via model-viewer.activateAR()");
+          await modelViewer.activateAR();
+          return;
+        }
+        // Nothing worked.
+        resetButton();
+        showArInformation(
+          "AR Not Available Here",
+          isInAppBrowser
+            ? "AR is blocked inside in-app browsers. Open this page in Chrome (Android) or Safari (iOS)."
+            : "This browser does not provide the AR capabilities required. " +
+              "On Android use Chrome; on iPhone use Safari.",
+          "You can still rotate and zoom the sculpture using the 3D viewer."
+        );
+      } catch (err) {
+        log("launchAR error", err && err.message);
+        resetButton();
+        showArInformation(
+          "Could Not Start AR",
+          "The AR session could not be started. " +
+          "On Android, install or update 'Google Play Services for AR' (ARCore). " +
+          "On iPhone, use Safari and make sure escultura.usdz is reachable.",
+          "You can still rotate and zoom the sculpture here."
+        );
+      }
+    }
+
+    /* =========================================================
+       13. LOAD TIMEOUT
        ========================================================= */
     loadTimeoutId = setTimeout(() => {
       if (!modelLoaded) {
@@ -567,13 +617,13 @@ html
     }, 15000);
 
     /* =========================================================
-       11. MODEL EVENTS
+       14. MODEL EVENTS
        ========================================================= */
     modelViewer.addEventListener("load", () => {
       clearTimeout(loadTimeoutId);
       modelLoaded = true;
       log("model loaded");
-      scheduleArCapabilityCheck(300);
+      scheduleCapabilityCheck();
     });
 
     modelViewer.addEventListener("error", (event) => {
@@ -587,67 +637,70 @@ html
     });
 
     /* =========================================================
-       12. AR STATUS
+       15. AR STATUS WATCHDOG
        ========================================================= */
     modelViewer.addEventListener("ar-status", (event) => {
       const status = event.detail && event.detail.status;
       log("ar-status", status);
 
-      switch (status) {
-        case "session-started":
-          // Keep the button in loading state while AR is open.
-          break;
+      if (status === "session-started" || status === "object-placed") {
+        // AR is actually running → cancel the watchdog so the button
+        // doesn't reset while the user is in the AR session.
+        if (activationTimer) {
+          clearTimeout(activationTimer);
+          activationTimer = null;
+        }
+      }
 
-        case "object-placed":
-          break;
+      if (status === "failed") {
+        resetButton();
+        showArInformation(
+          "AR Session Failed",
+          "The AR session failed to start. " +
+          "On Android, install or update 'Google Play Services for AR' (ARCore). " +
+          "On iPhone, use Safari and make sure escultura.usdz is reachable.",
+          "You can still rotate and zoom the 3D sculpture here."
+        );
+      }
 
-        case "failed":
-          arStarted = false;
-          setButtonIdle();
-          if (arAvailable) {
-            const perm = awaitCameraHint();
-            showArInformation(
-              "AR Session Failed",
-              "The AR session failed to start. " + perm +
-              "On Android, install or update 'Google Play Services for AR' (ARCore). " +
-              "On iPhone, use Safari and make sure escultura.usdz is reachable.",
-              "You can still rotate and zoom the 3D sculpture here."
-            );
-          }
-          break;
-
-        case "not-presenting":
-          arStarted = false;
-          if (arAvailable) setButtonIdle();
-          break;
+      if (status === "not-presenting") {
+        resetButton();
       }
     });
 
-    function awaitCameraHint() {
-      // Placeholder — we don't block on this; permission state is checked async
-      return "";
-    }
-
     /* =========================================================
-       13. ACTION BUTTON
+       16. ACTION BUTTON CLICK
        ========================================================= */
-    actionButton.addEventListener("click", async () => {
-      if (!arAvailable) {
-        // 3D-only mode. Explain why, tailored to the actual environment.
+    actionButton.addEventListener("click", () => {
+      if (arStarted) return;
+
+      if (!arPossible) {
+        // 3D-only. Explain why.
         if (isInAppBrowser) {
           showArInformation(
             "Open in Your Browser",
             "AR is blocked inside in-app browsers (Facebook, Instagram, WhatsApp, etc.). " +
             "Tap the menu (⋮) and choose 'Open in Chrome' or 'Open in Safari', " +
-            "or copy the link below and paste it into your browser.",
+            "or use 'Copy Link' below and paste it into your browser.",
             "In the meantime, you can rotate and zoom the 3D sculpture right here."
           );
-        } else if (supportsSceneViewer || supportsQuickLook) {
+        } else if (isFirefoxAndroid) {
           showArInformation(
-            "AR Could Not Start",
-            "This device should support AR, but the AR session could not be started. " +
-            "On Android, make sure 'Google Play Services for AR' (ARCore) is installed " +
-            "and updated. On iPhone, use Safari and ensure escultura.usdz is reachable.",
+            "Use Chrome for AR",
+            "Firefox for Android does not support AR for this type of content. " +
+            "Open this page in Chrome to use AR.",
+            "You can still rotate and zoom the 3D sculpture here."
+          );
+        } else if (isChromeIOS || isFirefoxIOS) {
+          showArInformation(
+            "Use Safari for AR",
+            "On iPhone, AR requires Safari. Chrome and Firefox for iOS cannot start Quick Look AR here.",
+            "You can still rotate and zoom the 3D sculpture here."
+          );
+        } else if (!isSecure) {
+          showArInformation(
+            "AR Requires HTTPS",
+            "Open this page over https:// to enable AR.",
             "You can still rotate and zoom the 3D sculpture here."
           );
         } else {
@@ -662,43 +715,30 @@ html
       }
 
       if (!modelLoaded) return;
-      if (arStarted) return;
 
       arStarted = true;
       setButtonLoading("Activating AR...");
 
-      // Best-effort camera permission hint (never blocks activation).
-      probeCameraPermission().then(state => log("camera permission:", state));
+      // Watchdog: if the page hasn't navigated to an AR session and no
+      // session-started event fired within 5 s, reset and inform the user.
+      activationTimer = setTimeout(() => {
+        log("activation watchdog fired");
+        resetButton();
+        showArInformation(
+          "AR Did Not Start",
+          "The AR session did not start. " +
+          "On Android, make sure 'Google Play Services for AR' (ARCore) is installed " +
+          "and updated, and that Chrome is allowed to open external apps. " +
+          "On iPhone, use Safari.",
+          "You can still rotate and zoom the 3D sculpture here."
+        );
+      }, 5000);
 
-      try {
-        log("activateAR()");
-        await modelViewer.activateAR();
-      } catch (err) {
-        log("activateAR failed", err && err.message);
-        arStarted = false;
-        setButtonIdle();
-
-        if (isInAppBrowser) {
-          showArInformation(
-            "Open in Your Browser",
-            "AR cannot launch inside an in-app browser. " +
-            "Open this page in Chrome (Android) or Safari (iOS).",
-            "You can still rotate and zoom the 3D sculpture here."
-          );
-        } else {
-          showArInformation(
-            "Could Not Start AR",
-            "The device reports AR support, but the AR session could not start. " +
-            "On Android, verify that 'Google Play Services for AR' (ARCore) is installed " +
-            "and updated. On iPhone, use Safari and confirm escultura.usdz is reachable.",
-            "You can still rotate and zoom the 3D sculpture here."
-          );
-        }
-      }
+      launchAR();
     });
 
     /* =========================================================
-       14. CLOSE / COPY / RELOAD / ESC
+       17. COPY LINK / CLOSE / RELOAD / ESC
        ========================================================= */
     closeInfoButton.addEventListener("click", hideArInformation);
 
@@ -708,13 +748,7 @@ html
         copyUrlButton.textContent = "Copied!";
         setTimeout(() => { copyUrlButton.textContent = "Copy Link"; }, 1500);
       } catch {
-        // Fallback: select the URL text
-        const range = document.createRange();
-        const sel = window.getSelection();
-        range.selectNodeContents(document.body);
-        sel.removeAllRanges();
-        sel.addRange(range);
-        copyUrlButton.textContent = "Press Ctrl+C";
+        copyUrlButton.textContent = "Select URL above";
         setTimeout(() => { copyUrlButton.textContent = "Copy Link"; }, 2000);
       }
     });
@@ -726,25 +760,24 @@ html
     });
 
     /* =========================================================
-       15. ORIENTATION / RESIZE
+       18. ORIENTATION / VISIBILITY
        ========================================================= */
-    // Re-evaluate AR capability after orientation changes
-    // (some devices only expose AR after a layout pass).
     window.addEventListener("orientationchange", () => {
       setTimeout(() => {
-        if (modelLoaded) scheduleArCapabilityCheck(400);
+        if (modelLoaded) evaluateArCapability();
       }, 600);
     });
 
-    // If the page was loaded while backgrounded, re-check when visible.
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && modelLoaded) {
-        scheduleArCapabilityCheck(300);
+        // Returning from a possible AR hand-off — reset button state.
+        resetButton();
+        evaluateArCapability();
       }
     });
 
     /* =========================================================
-       16. INITIAL STATE + PREFLIGHT
+       19. INITIAL STATE + PREFLIGHT
        ========================================================= */
     setButtonLoading("Loading 3D...");
 
