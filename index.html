@@ -41,7 +41,8 @@
       background-color: #ffffff;
     }
 
-    /* AR Button (Native Slot) */
+    /* AR button provided by model-viewer via slot="ar-button".
+       It only appears when AR is genuinely available. */
     #ar-button {
       position: absolute;
       bottom: calc(24px + env(safe-area-inset-bottom));
@@ -73,30 +74,7 @@
       transform: translateX(-50%) scale(0.97);
     }
 
-    /* NEW: Screenshot Button for 3D View */
-    #screenshot-button {
-      position: absolute;
-      bottom: calc(100px + env(safe-area-inset-bottom));
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 10px 20px;
-      border: 1px solid #ddd;
-      border-radius: 20px;
-      background: rgba(255, 255, 255, 0.9);
-      color: #333;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      -webkit-tap-highlight-color: transparent;
-      z-index: 10;
-    }
-
-    #screenshot-button:active {
-      background: #f0f0f0;
-    }
-
-    /* Status line */
+    /* Small status line at the bottom. */
     #status {
       position: absolute;
       left: 0;
@@ -168,9 +146,6 @@
 
   </model-viewer>
 
-  <!-- New: Button to capture the 3D model (not the AR camera) -->
-  <button id="screenshot-button" type="button">📷 Save Photo</button>
-
   <div id="status">Loading sculpture…</div>
 
   <div id="error-message" role="alert">
@@ -184,14 +159,16 @@
   </div>
 
   <script>
+    /* Minimal JS — only status text + error modal.
+       No activateAR(), no canActivateAR, no intent://,
+       no watchdog. model-viewer handles AR internally. */
+
     const viewer       = document.getElementById("sculpture");
     const status       = document.getElementById("status");
     const errorMessage = document.getElementById("error-message");
     const errorText    = document.getElementById("error-text");
     const reloadButton = document.getElementById("reload-button");
-    const screenshotBtn = document.getElementById("screenshot-button");
 
-    // Load / Error logic (unchanged)
     viewer.addEventListener("load", () => {
       status.textContent = "Sculpture loaded.";
     });
@@ -218,30 +195,6 @@
 
     reloadButton.addEventListener("click", () => {
       window.location.reload();
-    });
-
-    // NEW: Screenshot logic using model-viewer's toBlob method
-    screenshotBtn.addEventListener("click", async () => {
-      try {
-        // toBlob captures the current 3D render (without the real-world camera)
-        const blob = await viewer.toBlob({ mimeType: "image/png" });
-        
-        // Create a temporary link to trigger the download
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "escultura-view.png";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        status.textContent = "Image saved!";
-        setTimeout(() => { status.textContent = "Sculpture loaded."; }, 2000);
-      } catch (err) {
-        console.error("[Screenshot Error]", err);
-        status.textContent = "Could not save image.";
-      }
     });
   </script>
 
