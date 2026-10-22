@@ -9,7 +9,6 @@
 
   <title>AR Sculpture</title>
 
-  <!-- Google Model Viewer -->
   <script
     type="module"
     src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js">
@@ -30,6 +29,7 @@
         Roboto, Helvetica, Arial, sans-serif;
       -webkit-user-select: none;
       user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     model-viewer {
@@ -41,8 +41,6 @@
       background-color: #ffffff;
     }
 
-    /* AR button provided by model-viewer via slot="ar-button".
-       It only appears when AR is genuinely available. */
     #ar-button {
       position: absolute;
       bottom: calc(24px + env(safe-area-inset-bottom));
@@ -50,7 +48,6 @@
       transform: translateX(-50%);
       width: min(230px, 82vw);
       height: 64px;
-
       border: 0;
       border-radius: 32px;
       background: linear-gradient(135deg, #007aff 0%, #0055d4 100%);
@@ -59,14 +56,11 @@
       font-weight: 600;
       letter-spacing: 0.3px;
       cursor: pointer;
-
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
-
       box-shadow: 0 8px 24px rgba(0, 122, 255, 0.30);
-      -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
     }
 
@@ -74,7 +68,6 @@
       transform: translateX(-50%) scale(0.97);
     }
 
-    /* Small status line at the bottom. */
     #status {
       position: absolute;
       left: 0;
@@ -87,7 +80,24 @@
       z-index: 5;
     }
 
-    /* Error modal */
+    #banner {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff3cd;
+      color: #856404;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 2000;
+      max-width: 90vw;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      line-height: 1.4;
+    }
+
     #error-message {
       display: none;
       position: fixed;
@@ -119,6 +129,14 @@
       font-weight: 600;
       cursor: pointer;
     }
+
+    @media (max-width: 480px) {
+      #ar-button {
+        width: min(215px, 80vw);
+        height: 60px;
+        font-size: 17px;
+      }
+    }
   </style>
 </head>
 
@@ -148,26 +166,25 @@
 
   <div id="status">Loading sculpture…</div>
 
+  <div id="banner"></div>
+
   <div id="error-message" role="alert">
     <strong>3D Model Unavailable</strong>
     <br><br>
-    <span id="error-text">
-      The sculpture could not be loaded.
-    </span>
+    <span id="error-text">The sculpture could not be loaded.</span>
     <br><br>
     <button id="reload-button" type="button">Reload Page</button>
   </div>
 
   <script>
-    /* Minimal JS — only status text + error modal.
-       No activateAR(), no canActivateAR, no intent://,
-       no watchdog. model-viewer handles AR internally. */
-
     const viewer       = document.getElementById("sculpture");
     const status       = document.getElementById("status");
     const errorMessage = document.getElementById("error-message");
     const errorText    = document.getElementById("error-text");
     const reloadButton = document.getElementById("reload-button");
+    const banner       = document.getElementById("banner");
+
+    /* ---------- Load / error / AR status ---------- */
 
     viewer.addEventListener("load", () => {
       status.textContent = "Sculpture loaded.";
@@ -196,6 +213,36 @@
     reloadButton.addEventListener("click", () => {
       window.location.reload();
     });
+
+    /* ---------- Environment warnings (never blocks AR) ---------- */
+
+    const ua = navigator.userAgent || "";
+    const isAndroid = /Android/i.test(ua);
+    const isIOS =
+      /iPad|iPhone|iPod/i.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    const isInAppBrowser =
+      /FBAN|FBAV|FB_IAB|Instagram|Line\/|WhatsApp|MicroMessenger|Twitter|; wv\)/i.test(ua);
+
+    const isFirefoxAndroid = isAndroid && /Firefox/i.test(ua);
+    const isNonSafariIOS   = isIOS && /CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+    const isSecure         = window.isSecureContext === true;
+
+    function showBanner(text) {
+      banner.textContent = text;
+      banner.style.display = "block";
+    }
+
+    if (!isSecure) {
+      showBanner("AR requires HTTPS. The 3D viewer works, but AR is unavailable.");
+    } else if (isInAppBrowser) {
+      showBanner("Open this page in Chrome (Android) or Safari (iPhone) to use AR.");
+    } else if (isFirefoxAndroid) {
+      showBanner("Firefox for Android does not support AR. Open this page in Chrome.");
+    } else if (isNonSafariIOS) {
+      showBanner("On iPhone, AR requires Safari. Open this page in Safari.");
+    }
   </script>
 
 </body>
